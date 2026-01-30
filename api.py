@@ -24,6 +24,13 @@ def get_prayer_times(
     month: int = None,
     day: int = None,
 ):
+    """
+    Fetches daily prayer times for a specific latitude and longitude.
+
+    - **Smart Detection**: Automatically detects the timezone and country based on the coordinates.
+    - **Method Selection**: Selects the appropriate calculation method (e.g., KEMENAG for Indonesia, MWL for Europe).
+    - **High Latitude Safeties**: Applies fallback rules (like 1/7th of the night) if coordinates are in extreme regions where the sun doesn't set.
+    """
     try:
         # 1. Auto-detect Timezone
         timezone = tf.timezone_at(lng=lng, lat=lat)

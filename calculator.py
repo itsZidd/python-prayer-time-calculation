@@ -62,6 +62,11 @@ class AdvancedPrayerCalculator:
         return math.degrees(r)
 
     def calculate_julian_date(self, year, month, day):
+        """
+        Converts a standard Gregorian date into a Julian Date (JD).
+        Julian dates are a continuous count of days used in astronomy,
+        making it much easier to calculate celestial math across different years.
+        """
         if month <= 2:
             year -= 1
             month += 12
@@ -76,6 +81,11 @@ class AdvancedPrayerCalculator:
         )
 
     def sun_position(self, jd):
+        """
+        Calculates the Sun's declination and the Equation of Time (EqT).
+        - Declination: The angle of the sun relative to the Earth's equator.
+        - EqT: The difference between true solar time (sundial) and mean solar time (clock).
+        """
         D = jd - 2451545.0
         g = 357.529 + 0.98560028 * D
         q = 280.459 + 0.98564736 * D
@@ -95,6 +105,12 @@ class AdvancedPrayerCalculator:
         return delta, EqT
 
     def get_hour_angle(self, altitude, declination):
+        """
+        Calculates the Hour Angle of the sun for a given altitude.
+        This determines how long it takes for the sun to reach a certain angle
+        below the horizon (used to find Fajr, Sunrise, Maghrib, and Isha times).
+        Returns None if the sun never reaches the specified angle (e.g., polar regions).
+        """
         try:
             cos_h = (
                 math.sin(self.rad(altitude))
@@ -107,6 +123,11 @@ class AdvancedPrayerCalculator:
             return None
 
     def get_asr_angle(self, declination):
+        """
+        Calculates the specific Hour Angle for Asr prayer based on shadow lengths.
+        - Standard (Shafi'i/Maliki/Hanbali): Shadow length equals the object's height.
+        - Hanafi: Shadow length is twice the object's height.
+        """
         shadow_factor = 2 if self.asr_madhab == "HANAFI" else 1
         delta_lat_dec = abs(self.lat - declination)
         altitude = self.deg(

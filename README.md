@@ -1,118 +1,54 @@
-# 🕌 Smart Prayer Times API
+# Smart Prayer Times API & CLI
 
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+## 📖 Overview
+This project calculates Islamic prayer times based on latitude, longitude, and timezone. It includes advanced handling for high-latitude locations (like Norway or Sweden) and automatically detects the best calculation method (MWL, ISNA, KEMENAG, etc.) based on the country's coordinates.
 
-A high-precision, offline-capable Prayer Times API built with **Python** and **FastAPI**.
-
-It automatically detects the correct calculation method (e.g., Kemenag for Indonesia, ISNA for USA) and handles complex edge cases like **Arctic/High-Latitude locations** (e.g., Norway) where the sun behaves irregularly.
-
-## ⚡ Features
-
-* **🌍 Smart Auto-Detection:** Automatically detects **Timezone** and **Country** from coordinates.
-* **⚙️ Method Mapping:** Automatically assigns the official calculation standard for that country (e.g., Indonesia  Kemenag).
-* **❄️ High Latitude Support:** Includes specialized rules (Nearest Latitude/Aqrab Al-Bilad) for locations like Tromsø, Norway.
-* **🚀 Lightweight:** Optimized to run on low-memory servers (using `reverse_geocode`).
-* **🐳 Docker Ready:** Includes Dockerfile for easy cloud deployment (Render, Fly.io, etc.).
-
-## 🛠️ Installation
-
-1. **Clone the repository:**
-```bash
-git clone https://github.com/yourusername/prayer-times-api.git
-cd prayer-times-api
-
-```
-
-
-2. **Create a virtual environment (Optional but recommended):**
-```bash
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Mac/Linux
-source .venv/bin/activate
-
-```
-
-
-3. **Install dependencies:**
-```bash
-pip install -r requirements.txt
-
-```
-
-
+## 🗂️ Project Structure
+* **`api.py`**: The FastAPI web server. Handles HTTP requests, auto-detects timezones, and reverse-geocodes coordinates to countries.
+* **`calculator.py`**: The core math engine. Calculates Julian dates, solar declination, hour angles, and applies high-latitude fallback rules.
+* **`config.py`**: Contains all calculation constants. Maps specific angles for Fajr/Isha and links countries to their default local standards.
+* **`main.py`**: A Command Line Interface (CLI) to run calculations directly in your terminal.
 
 ## 🚀 How to Run
 
-Start the server locally:
+### 1. Run the Web API
+Install the required libraries, then start the server:
+`pip install -r requirements.txt`
+`uvicorn api:app --reload`
 
-```bash
-uvicorn api:app --reload
+Once running, open your browser and go to **`http://localhost:8000/docs`** to see the interactive API documentation.
 
-```
+### 2. Run the Terminal CLI
+To test coordinates quickly in your terminal without starting the server:
+`python main.py`
+Follow the prompts to enter your latitude, longitude, and timezone.
 
-The API will be available at: `http://127.0.0.1:8000`
+## 📡 API Response Example
+When you make a GET request to `/times` with coordinates, the API returns a structured JSON response containing the metadata and the calculated prayer times.
 
-## 📡 API Usage
+**Example Request:**
+`GET http://localhost:8000/times?lat=-6.2088&lng=106.8456`
 
-### Endpoint: `/times`
-
-#### 1. Standard Request (Auto-Detect Everything)
-
-*Best for most of the world (Indonesia, USA, UK, etc).*
-
-```http
-GET /times?lat=-7.9689&lng=112.6327
-
-```
-
-**Response:**
-
+**Example Response:**
 ```json
 {
   "meta": {
+    "date": "2026-04-02",
+    "latitude": -6.2088,
+    "longitude": 106.8456,
     "timezone": "Asia/Jakarta",
-    "detected_country": "Indonesia",
-    "method_used": "KEMENAG"
+    "country": "Indonesia",
+    "method_used": "KEMENAG",
+    "high_lat_rule": "SEVENTH_OF_NIGHT"
   },
   "timings": {
-    "Fajr": "04:07",
-    "Maghrib": "17:58",
-    ...
+    "Fajr": "04:40",
+    "Sunrise": "05:52",
+    "Dhuhr": "11:58",
+    "Asr": "15:15",
+    "Maghrib": "18:00",
+    "Isha": "19:08",
+    "Midnight": "23:20",
+    "Imsak": "04:30"
   }
 }
-
-```
-
-#### 2. High-Latitude Request (Arctic/Norway)
-
-*For locations like Tromsø, Norway. Uses the "Nearest Latitude" rule to match local mosque timetables.*
-
-```http
-GET /times?lat=69.6492&lng=18.9553&high_latitude_rule=NEAREST_LATITUDE
-
-```
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-| --- | --- | --- | --- |
-| `lat` | float | **Yes** | Latitude (e.g., `-7.98`) |
-| `lng` | float | **Yes** | Longitude (e.g., `112.63`) |
-| `date` | str | No | Specific date (Format: `YYYY-MM-DD`). Defaults to today. |
-| `high_latitude_rule` | str | No | Options: `SEVENTH_OF_NIGHT` (Default) or `NEAREST_LATITUDE` (for Scandinavia). |
-
-## 🐳 Deployment (Docker)
-
-To build and run inside Docker:
-
-```bash
-docker build -t prayer-api .
-docker run -p 8000:8000 prayer-api
-
-```
-
-## 📄 License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
