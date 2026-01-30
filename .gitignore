@@ -1,0 +1,19 @@
+# Python Bytecode (Junk)
+__pycache__/
+*.py[cod]
+
+# Virtual Environments (Huge folders)
+.venv/
+venv/
+env/
+
+# Environment Variables (Secrets - VERY IMPORTANT)
+.env
+
+# OS Junk
+.DS_Store
+Thumbs.db
+
+# Editor Settings (Optional)
+.vscode/
+.idea/
