@@ -1,0 +1,5 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+timezonefinder==6.2.0
+reverse_geocode>=1.4.1
+country_converter==1.2.0
