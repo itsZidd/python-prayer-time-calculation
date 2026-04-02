@@ -4,12 +4,11 @@ from datetime import datetime
 import country_converter as coco
 import reverse_geocode as rg  # <--- CHANGED: Import the light version (singular)
 from fastapi import FastAPI, HTTPException, Query
-from timezonefinder import TimezoneFinder
+from tzfpy import get_tz
 
 from calculator import AdvancedPrayerCalculator
 
 app = FastAPI(title="Smart Prayer Times API")
-tf = TimezoneFinder()
 
 
 @app.get("/times")
@@ -33,7 +32,7 @@ def get_prayer_times(
     """
     try:
         # 1. Auto-detect Timezone
-        timezone = tf.timezone_at(lng=lng, lat=lat)
+        timezone = get_tz(lng=lng, lat=lat)
         if not timezone:
             timezone = "UTC"
 
