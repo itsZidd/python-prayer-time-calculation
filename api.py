@@ -12,6 +12,20 @@ from config import HIGH_LATITUDE_RULES
 app = FastAPI(title="Smart Prayer Times API")
 
 
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "docs": "/docs",
+        "example": "/times?lat=-6.2088&lng=106.8456",
+    }
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/times")
 def get_prayer_times(
     lat: float = Query(..., ge=-90, le=90, description="Latitude, -90 to 90"),
