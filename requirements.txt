@@ -4,3 +4,4 @@ tzfpy
 tzdata
 reverse_geocode>=1.4.1
 country_converter==1.2.0
+geonamescache>=2.0.0

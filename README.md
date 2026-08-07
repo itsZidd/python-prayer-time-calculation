@@ -4,7 +4,8 @@
 The API is deployed at **https://python-prayer-time-calculation.vercel.app/**.
 - Interactive docs (try it in-browser, no setup): https://python-prayer-time-calculation.vercel.app/docs
 - Quick health check: https://python-prayer-time-calculation.vercel.app/health
-- Example request: https://python-prayer-time-calculation.vercel.app/times?lat=-6.2088&lng=106.8456
+- Example request (coordinates): https://python-prayer-time-calculation.vercel.app/times?lat=-6.2088&lng=106.8456
+- Example request (city): https://python-prayer-time-calculation.vercel.app/times?city=Jakarta
 
 ## 📖 Overview
 This project calculates Islamic prayer times based on latitude, longitude, and timezone. It includes advanced handling for high-latitude locations (like Norway or Sweden) and automatically detects the best calculation method (MWL, ISNA, KEMENAG, etc.) based on the country's coordinates.
@@ -47,6 +48,17 @@ These only apply when the raw calculation genuinely has no solution — see `CHA
 
 **Scope note on `NEAREST_DAY`:** it only ever substitutes Fajr/Isha — never Sunrise/Maghrib. It's built for *persistent twilight* (real sunrise/sunset still happen, but the deeper Fajr/Isha angle can't be reached), not genuine midnight sun (where sunrise/sunset themselves have no solution). See **Limitations** below for why, and for what still returns `N/A` in that more extreme case.
 
+## 🔎 Search by City
+`/times` accepts a `city` name as an alternative to `lat`/`lng`:
+```
+GET /times?city=Jakarta
+```
+City name matching is offline (via `geonamescache`'s ~34k-city dataset — no external network call, consistent with how the rest of this API avoids live geocoding services). If multiple cities share a name (e.g. "Paris" matches both Paris, France and Paris, Texas), the most populous match is used by default; pass `country` (a name like `Indonesia` or an ISO code like `ID`) to disambiguate:
+```
+GET /times?city=Paris&country=US
+```
+The response's `meta.city` field reports exactly which city was matched, so a wrong disambiguation is always visible rather than silent. An unmatched city name returns `404`. If `city` and `lat`/`lng` are both given, `city` takes precedence. Coverage is limited to `geonamescache`'s dataset (populated places above a size threshold) — very small towns may not resolve; use coordinates for those.
+
 ## 📡 API Response Example
 When you make a GET request to `/times` with coordinates, the API returns a structured JSON response containing the metadata and the calculated prayer times.
 
@@ -62,6 +74,7 @@ GET http://localhost:8000/times?lat=-6.2088&lng=106.8456&year=2026&month=4&day=2
     "date": "2026-04-02",
     "latitude": -6.2088,
     "longitude": 106.8456,
+    "city": null,
     "timezone": "Asia/Jakarta",
     "country": "Indonesia",
     "method_used": "KEMENAG",
@@ -85,7 +98,7 @@ GET http://localhost:8000/times?lat=-6.2088&lng=106.8456&year=2026&month=4&day=2
 pip install pytest httpx
 pytest tests/
 ```
-19 tests covering the reference cities from `CHANGELOG.md` (regression guard against reintroducing the 1.1.0/1.2.0 bugs), input validation, and known edge cases.
+26 tests covering the reference cities from `CHANGELOG.md` (regression guard against reintroducing the 1.1.0/1.2.0 bugs), input validation, city-search resolution/disambiguation, and known edge cases.
 
 ## 🎯 Accuracy
 Prayer time calculations have been cross-checked against 11 real-world locations spanning every continent and both hemispheres, across 5 calculation methods and 3 unusual timezone offsets (including UTC+5:30 and UTC+5:45), with results matching independent published prayer time sites to within 1-3 minutes — consistent with the normal variance expected between any two independently-implemented astronomical calculators. See `CHANGELOG.md` for details on two calculation bugs found and fixed during this verification.
@@ -112,6 +125,7 @@ This project's calculation engine passed casual testing for months — every low
 
 - **Genuine polar day/night still returns `N/A` for every field.** `NEAREST_DAY` only substitutes Fajr/Isha for *persistent twilight* (where plain sunrise/sunset still occur normally). True midnight sun — where the sun never sets at all, common above the Arctic/Antarctic Circle for weeks around the solstice — has no rule that produces a usable answer, by design. Extending `NEAREST_DAY` to cover this case was attempted and reverted after it produced internally inconsistent schedules (see the case study above); a correct fix would need Sunrise/Maghrib's own nearest-valid-day search kept independent of, and reconciled with, Fajr/Isha's — a larger change than has been justified so far given how few locations this affects.
 - **Reverse-geocoding degrades silently for remote coordinates.** `reverse_geocode` always returns the *nearest known point*, regardless of actual distance — genuine open-ocean coordinates get attributed to whatever land is nearest, which can be very far away and produce a misleading `country` value. There's no distance/confidence threshold in place to detect and null this out.
+- **City search only covers `geonamescache`'s dataset (~34k populated places above a size threshold).** Small towns/villages below that threshold won't resolve and return `404` — use coordinates for those. Ambiguous names default to the most populous match, which is usually but not always what's meant; `meta.city` always reports which one was actually used.
 - **Hijri/Islamic calendar dates are not computed by this API at all** — only Gregorian. (The companion mobile app has this via a separate module; it hasn't been ported back here.)
 - **No caching or rate limiting** on the API — every request recomputes from scratch and calls the geocoding libraries fresh. Fine for personal/small-scale use; would need attention before any high-traffic deployment.
 
@@ -123,5 +137,6 @@ tzfpy
 tzdata
 reverse_geocode>=1.4.1
 country_converter==1.2.0
+geonamescache>=2.0.0
 ```
-`tzdata` provides the IANA timezone database used by `zoneinfo`. It's required on Windows and on minimal Linux images (e.g. Alpine) that don't ship a system tz database — without it, any timezone lookup in `calculator.py` raises `ZoneInfoNotFoundError`.
+`tzdata` provides the IANA timezone database used by `zoneinfo`. It's required on Windows and on minimal Linux images (e.g. Alpine) that don't ship a system tz database — without it, any timezone lookup in `calculator.py` raises `ZoneInfoNotFoundError`. `geonamescache` provides the offline city dataset used by `/times`'s `city` search parameter.

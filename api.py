@@ -1,15 +1,57 @@
 # api.py
 from datetime import datetime
+from typing import Optional
 
 import country_converter as coco
 import reverse_geocode as rg  # <--- CHANGED: Import the light version (singular)
 from fastapi import FastAPI, HTTPException, Query
+from geonamescache import GeonamesCache
 from tzfpy import get_tz
 
 from calculator import AdvancedPrayerCalculator
 from config import HIGH_LATITUDE_RULES
 
 app = FastAPI(title="Smart Prayer Times API")
+
+# Loaded once per function instance (not per-request) — geonamescache holds
+# its ~34k-city dataset in memory, so this avoids re-parsing it on every call.
+_geo_cache = GeonamesCache()
+
+
+def resolve_city(city: str, country: Optional[str]):
+    """
+    Resolves a city name to its best-matching record via geonamescache
+    (offline dataset — no network call, consistent with how this API
+    already does reverse geocoding).
+
+    Tries an exact name match first, then falls back to substring search
+    for partial names (e.g. "New York City" -> "New York"). If multiple
+    cities share the name, `country` (accepted as either a name like
+    "Indonesia" or an ISO code like "ID") filters to that country; ties
+    are broken by picking the most populous match, since that's almost
+    always what a user means by an unqualified city name (e.g. "Paris"
+    should resolve to Paris, France, not Paris, Texas).
+
+    Returns None if nothing matches.
+    """
+    matches = _geo_cache.search_cities(
+        city, attribute="name", case_sensitive=False, contains_search=False
+    )
+    if not matches:
+        matches = _geo_cache.search_cities(
+            city, attribute="name", case_sensitive=False, contains_search=True
+        )
+    if not matches:
+        return None
+
+    if country:
+        code = coco.convert(names=country, to="ISO2")
+        if code and code != "not found":
+            filtered = [m for m in matches if m["countrycode"] == code]
+            if filtered:
+                matches = filtered
+
+    return max(matches, key=lambda m: int(m.get("population") or 0))
 
 
 @app.get("/")
@@ -28,8 +70,27 @@ def health():
 
 @app.get("/times")
 def get_prayer_times(
-    lat: float = Query(..., ge=-90, le=90, description="Latitude, -90 to 90"),
-    lng: float = Query(..., ge=-180, le=180, description="Longitude, -180 to 180"),
+    lat: Optional[float] = Query(
+        None, ge=-90, le=90, description="Latitude, -90 to 90. Required unless 'city' is given."
+    ),
+    lng: Optional[float] = Query(
+        None, ge=-180, le=180, description="Longitude, -180 to 180. Required unless 'city' is given."
+    ),
+    city: Optional[str] = Query(
+        None,
+        description=(
+            "City name to search instead of lat/lng, e.g. 'Jakarta'. "
+            "Takes precedence over lat/lng if both are given."
+        ),
+    ),
+    country: Optional[str] = Query(
+        None,
+        description=(
+            "Optional country name or ISO code to disambiguate cities that "
+            "share a name (e.g. 'Paris'), such as 'Indonesia' or 'ID'. Only "
+            "used together with 'city'."
+        ),
+    ),
     high_latitude_rule: str = Query(
         "SEVENTH_OF_NIGHT",
         description=(
@@ -42,7 +103,8 @@ def get_prayer_times(
     day: int = None,
 ):
     """
-    Fetches daily prayer times for a specific latitude and longitude.
+    Fetches daily prayer times for a specific location, given either
+    coordinates (`lat`/`lng`) or a `city` name.
     - **Smart Detection**: Automatically detects the timezone and country based on the coordinates.
     - **Method Selection**: Selects the appropriate calculation method (e.g., KEMENAG for Indonesia, MWL for Europe).
     - **High Latitude Safeties**: Applies fallback rules (like 1/7th of the night) if coordinates are in extreme regions where the sun doesn't set.
@@ -59,6 +121,28 @@ def get_prayer_times(
                 f"Invalid high_latitude_rule: {high_latitude_rule!r}. "
                 f"Valid options are: {', '.join(sorted(HIGH_LATITUDE_RULES.keys()))}"
             ),
+        )
+
+    # --- Resolve city -> coordinates, or require coordinates directly ---
+    matched_city = None
+    if city:
+        match = resolve_city(city, country)
+        if match is None:
+            detail = f"No city found matching {city!r}"
+            if country:
+                detail += f" in {country!r}"
+            raise HTTPException(status_code=404, detail=detail)
+        lat = match["latitude"]
+        lng = match["longitude"]
+        matched_city = {
+            "name": match["name"],
+            "country_code": match["countrycode"],
+            "population": match["population"],
+        }
+    elif lat is None or lng is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide either 'city' (optionally with 'country') or both 'lat' and 'lng'.",
         )
 
     # --- Geocoding / timezone detection ---
@@ -78,14 +162,21 @@ def get_prayer_times(
         if not timezone:
             timezone = "UTC"
 
-        location_data = rg.search([(lat, lng)])[0]
-        country_code = location_data.get("country_code")
+        if matched_city:
+            # Country is already known directly from the city match — more
+            # reliable than reverse-geocoding back from coordinates, and
+            # avoids a redundant nearest-point lookup.
+            converted = coco.convert(names=matched_city["country_code"], to="name_short")
+            country_name = converted if converted and converted != "not found" else None
+        else:
+            location_data = rg.search([(lat, lng)])[0]
+            country_code = location_data.get("country_code")
 
-        country_name = None
-        if country_code:
-            converted = coco.convert(names=country_code, to="name_short")
-            if converted and converted != "not found":
-                country_name = converted
+            country_name = None
+            if country_code:
+                converted = coco.convert(names=country_code, to="name_short")
+                if converted and converted != "not found":
+                    country_name = converted
     except Exception as e:
         # A genuine failure in the geocoding libraries themselves (not a bad
         # match, an actual exception) — still worth a clear 502, since it's
@@ -128,6 +219,7 @@ def get_prayer_times(
             "date": calc_date.strftime("%Y-%m-%d"),
             "latitude": lat,
             "longitude": lng,
+            "city": matched_city,  # null when queried by lat/lng directly; shows which city matched otherwise
             "timezone": timezone,
             "country": country_name,  # null if genuinely undetectable (e.g. open ocean)
             "method_used": calc.method_key,

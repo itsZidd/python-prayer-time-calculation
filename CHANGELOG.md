@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [1.4.0] - 2026-08-07
+
+### Added
+
+- **City search on `/times`.** The endpoint now accepts a `city` name (e.g. `?city=Jakarta`) as an alternative to `lat`/`lng`. Resolution is offline via `geonamescache`'s ~34k-city dataset — no external network call, consistent with how the rest of this API already avoids live geocoding services. Ambiguous names (e.g. "Paris" matches both France and Texas) default to the most populous match; an optional `country` param (name or ISO code) disambiguates explicitly. The response's `meta.city` field always reports exactly which city was matched, so a wrong disambiguation is visible rather than silent. Unmatched names return `404`; if both `city` and `lat`/`lng` are given, `city` takes precedence. Added `tests/test_api.py` (7 tests) covering resolution, disambiguation, and error cases.
+
 ## [1.3.0] - 2026-08-07
 
 ### Added
