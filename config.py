@@ -144,11 +144,19 @@ COUNTRY_METHOD_MAPPING = {
 }
 
 # C. High Latitude Rules
+# FIX (1.2.0): TWILIGHT_ANGLE was missing here even though calculator.py has
+# always supported it — meaning it was undocumented/unvalidatable even
+# though it worked if you knew to pass it. Any code (including the API
+# layer) that validates high_latitude_rule against this dict needs it
+# present, or it will incorrectly reject a legitimate rule.
+# ADDED (1.3.0): NEAREST_DAY (Aqrab al-Ayyam) — see calculator.py's
+# find_nearest_valid_time() and README.md for scope and reasoning.
 HIGH_LATITUDE_RULES = {
-    # The Safe Defaults
     "SEVENTH_OF_NIGHT": "SEVENTH_OF_NIGHT",
     "MIDDLE_OF_NIGHT": "MIDDLE_OF_NIGHT",
     "NEAREST_LATITUDE": "NEAREST_LATITUDE",
+    "TWILIGHT_ANGLE": "TWILIGHT_ANGLE",
+    "NEAREST_DAY": "NEAREST_DAY",
 }
 
 DEFAULT_HIGH_LATITUDE_RULE = "SEVENTH_OF_NIGHT"

@@ -1,5 +1,6 @@
 # calculator.py
 import math
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import CALCULATION_METHODS, COUNTRY_METHOD_MAPPING, HIGH_LATITUDE_RULES
@@ -24,6 +25,19 @@ class AdvancedPrayerCalculator:
         self.high_latitude_rule = (
             high_latitude_rule if high_latitude_rule else "SEVENTH_OF_NIGHT"
         )
+
+        # FIX: an unrecognized rule (typo, stale value, etc.) previously fell
+        # through every branch in resolve_time()'s offset calculation with no
+        # error, silently leaving offset=0 — which collapses Fajr to Sunrise
+        # and Isha to Maghrib for any location where the raw calculation has
+        # no solution (i.e. exactly the high-latitude cases this is meant to
+        # help). Validate eagerly instead of failing silently later.
+        if self.high_latitude_rule not in HIGH_LATITUDE_RULES:
+            valid = ", ".join(sorted(HIGH_LATITUDE_RULES.keys()))
+            raise ValueError(
+                f"Unknown high_latitude_rule: {self.high_latitude_rule!r}. "
+                f"Valid options are: {valid}"
+            )
 
         # --- HIGH LATITUDE LOGIC ---
 
@@ -141,15 +155,75 @@ class AdvancedPrayerCalculator:
             return 0
         return (time2 - time1 + 24) % 24
 
+    def find_nearest_valid_time(self, year, month, day, angle_degrees, is_before_noon, tz_offset, max_days=190):
+        """
+        Aqrab al-Ayyam (Nearest Day): when the sun never reaches
+        `angle_degrees` below the horizon on the target date (persistent
+        twilight), search outward day-by-day for the closest date — before
+        or after — where it IS reachable, and return that day's raw clock
+        time (as an hour-of-day float) for reuse on the target date.
+
+        Standard definition (matches the mobile app's implementation of
+        this same rule): "use fajr and isha times from the last day when it
+        was possible to calculate these times in the normal way."
+
+        Scope note: this is intentionally only ever called for Fajr/Isha.
+        It is NOT used for genuine polar day/night (where even plain
+        sunrise/sunset has no solution) — see get_times()'s docstring for
+        why extending it there produces inconsistent results.
+        """
+        base = datetime(year, month, day)
+        for delta in range(1, max_days + 1):
+            for direction in (-1, 1):
+                test_date = base + timedelta(days=direction * delta)
+                jd = self.calculate_julian_date(test_date.year, test_date.month, test_date.day)
+                dec, eqt = self.sun_position(jd)
+                dhuhr = 12 + tz_offset - (self.lng / 15) - eqt
+                ha = self.get_hour_angle(angle_degrees, dec)
+                if ha is not None:
+                    return (dhuhr - ha) if is_before_noon else (dhuhr + ha)
+        return None  # no valid day found within range — effectively permanent polar conditions
+
     def resolve_time(
-        self, year, month, day, initial_time, base_time, angle, is_fajr=True
+        self, year, month, day, initial_time, base_time, angle, is_fajr=True, tz_offset=0
     ):
         """
         Applies High Latitude Rules.
-        FIX: If NEAREST_LATITUDE is used, we trust the math if it works.
-        We only use fallback if the math returns None.
+
+        FIX #1 (night_duration): `ha_sun` is the hour angle from solar noon to
+        sunrise/sunset, so `2 * ha_sun` is the length of DAYLIGHT, not night.
+        The original code used this directly as "night_duration", which is
+        backwards — corrected below to `24 - (2 * ha_sun)`. This was most
+        visible at high latitude in summer (night_duration was computed as
+        ~21+ hours when the real night was only ~2-3 hours), but it also
+        subtly affected the clamp logic (see Fix #2) at moderate latitudes.
+
+        FIX #2 (over-aggressive clamp): the original code applied a "safety
+        clamp" to EVERY valid raw calculation, comparing it against a
+        night-fraction boundary and overriding it if the raw value was
+        judged "too far" from sunrise/sunset. This was intended only for
+        genuine high-latitude edge cases, but it was firing even at
+        moderate latitudes (verified: New York, ~40.7°N) where the raw
+        15-degree/18-degree sun-angle calculation was already correct and
+        didn't need any adjustment. Per PrayTimes.org's own documented
+        design intent, these high-latitude fallback rules exist specifically
+        for when "the determination of Fajr and Isha is not possible using
+        the usual formulas" — i.e. only when the raw calculation has NO
+        solution (returns None) — not as a constant sanity-check on a valid
+        answer. Fixed: now only used when initial_time is None.
+
+        FEATURE (1.3.0): NEAREST_DAY (Aqrab al-Ayyam) is handled as its own
+        branch before the night-duration math below, since it doesn't use
+        that math at all — it reuses a nearby day's clock time instead.
         """
-        # 1. Calculate Night Duration
+        if self.high_latitude_rule == "NEAREST_DAY":
+            if initial_time is not None:
+                return initial_time
+            return self.find_nearest_valid_time(
+                year, month, day, -angle, is_fajr, tz_offset
+            )
+
+        # 1. Night duration (FIXED: was `2 * ha_sun`, which is daylight length)
         jd = self.calculate_julian_date(year, month, day)
         dec, _ = self.sun_position(jd)
         ha_sun = self.get_hour_angle(-0.8333, dec)
@@ -157,7 +231,8 @@ class AdvancedPrayerCalculator:
         if ha_sun is None:
             return None
 
-        night_duration = 2 * ha_sun
+        daylight_duration = 2 * ha_sun
+        night_duration = 24 - daylight_duration
 
         # 2. Define Offset based on Rule
         offset = 0
@@ -178,28 +253,13 @@ class AdvancedPrayerCalculator:
             else:
                 return base_time + offset
 
-        # 4. IF MATH WORKED (Not None)
-        # CRITICAL FIX: If we are mimicking "Nearest Latitude" (Oslo/58.5),
-        # we generally TRUST the astronomical calculation of that latitude.
-        # We should NOT clamp it with 1/7th unless necessary.
-        if self.high_latitude_rule == "NEAREST_LATITUDE":
-            return initial_time
-
-        # 5. For other rules (like SEVENTH_OF_NIGHT), apply the Clamp (Sanity Check)
-        if is_fajr:
-            safe_fajr = base_time - offset
-            diff_calc = self.time_diff(initial_time, base_time)
-            diff_safe = self.time_diff(safe_fajr, base_time)
-            if diff_calc > diff_safe:
-                return safe_fajr
-            return initial_time
-        else:
-            safe_isha = base_time + offset
-            diff_calc = self.time_diff(base_time, initial_time)
-            diff_safe = self.time_diff(base_time, safe_isha)
-            if diff_calc > diff_safe:
-                return safe_isha
-            return initial_time
+        # 4. IF MATH WORKED (Not None): trust it directly.
+        # FIXED: previously only NEAREST_LATITUDE trusted a valid raw
+        # calculation outright; every other rule still ran it through the
+        # clamp below even when nothing was wrong with it. Now all rules
+        # trust a valid raw calculation, and the fallback offset above is
+        # used ONLY when the raw calculation has no solution at all.
+        return initial_time
 
     # --- Main Logic ---
     def get_times(self, date_obj):
@@ -240,9 +300,31 @@ class AdvancedPrayerCalculator:
 
         # Base Times (used as anchors)
         sunrise_time = dhuhr - ha_sunrise
-        maghrib_time = dhuhr + ha_maghrib  # Sunset (roughly)
+        sunset_time = dhuhr + ha_sunrise  # physical sunset, used as Maghrib's fallback anchor
 
         # --- APPLY HIGH LATITUDE FIXES ---
+
+        # Fix Maghrib (FIXED: previously assumed ha_maghrib was always valid
+        # whenever ha_sunrise was — methods with a deeper maghrib_angle, e.g.
+        # Tehran's Shia-convention 4.5 degrees, can fail independently of
+        # plain 0.8333-degree sunset. Previously this silently produced
+        # `dhuhr + None`, which Python would raise a TypeError on; now it
+        # falls back through resolve_time like Fajr/Isha.)
+        if ha_maghrib is not None:
+            maghrib_time = dhuhr + ha_maghrib
+        else:
+            maghrib_time = self.resolve_time(
+                date_obj.year,
+                date_obj.month,
+                date_obj.day,
+                None,
+                sunset_time,
+                self.maghrib_angle,
+                is_fajr=False,
+                tz_offset=offset,
+            )
+            if maghrib_time is None:
+                maghrib_time = sunset_time
 
         # 1. Fix Fajr (Anchor: Sunrise)
         raw_fajr = (dhuhr - ha_fajr) if ha_fajr is not None else None
@@ -254,6 +336,7 @@ class AdvancedPrayerCalculator:
             sunrise_time,
             self.fajr_angle,
             is_fajr=True,
+            tz_offset=offset,
         )
 
         # 2. Fix Isha (Anchor: Maghrib/Sunset)
@@ -270,6 +353,7 @@ class AdvancedPrayerCalculator:
                 maghrib_time,
                 self.isha_angle,
                 is_fajr=False,
+                tz_offset=offset,
             )
 
         # 3. Assemble
@@ -278,7 +362,7 @@ class AdvancedPrayerCalculator:
             "Sunrise": sunrise_time,
             "Dhuhr": dhuhr,
             "Asr": dhuhr + ha_asr,
-            "Maghrib": dhuhr + ha_maghrib,
+            "Maghrib": maghrib_time,
             "Isha": final_isha,
         }
 
