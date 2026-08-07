@@ -1,5 +1,11 @@
 # Smart Prayer Times API & CLI
 
+## 🔴 Live Demo
+The API is deployed at **https://python-prayer-time-calculation.vercel.app/**.
+- Interactive docs (try it in-browser, no setup): https://python-prayer-time-calculation.vercel.app/docs
+- Quick health check: https://python-prayer-time-calculation.vercel.app/health
+- Example request: https://python-prayer-time-calculation.vercel.app/times?lat=-6.2088&lng=106.8456
+
 ## 📖 Overview
 This project calculates Islamic prayer times based on latitude, longitude, and timezone. It includes advanced handling for high-latitude locations (like Norway or Sweden) and automatically detects the best calculation method (MWL, ISNA, KEMENAG, etc.) based on the country's coordinates.
 
